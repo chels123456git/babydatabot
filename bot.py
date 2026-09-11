@@ -76,6 +76,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 # --------------------------------------------------------------------------
 # Configuration (all from environment variables — nothing hardcoded)
@@ -596,6 +597,23 @@ def build_application() -> Application:
     proxy_url = os.environ.get("BOT_HTTP_PROXY")
     if proxy_url:
         builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
+    else:
+        # httpx (the HTTP client python-telegram-bot uses) defaults to
+        # trust_env=True, which means it silently obeys any http_proxy /
+        # https_proxy environment variables the HOST sets system-wide, even
+        # though we never asked for a proxy here. PythonAnywhere's free
+        # tier sets exactly such variables (pointing at their own proxy)
+        # for every process, but that proxy is unreliable for api.telegram.org
+        # specifically (intermittent "503 Service Unavailable") -- and it's
+        # unnecessary, since api.telegram.org is directly reachable on the
+        # free tier's outbound allowlist. So when we're NOT explicitly using
+        # BOT_HTTP_PROXY, force httpx to ignore any system-level proxy env
+        # vars and connect directly.
+        no_proxy_request = HTTPXRequest(httpx_kwargs={"trust_env": False})
+        no_proxy_get_updates_request = HTTPXRequest(httpx_kwargs={"trust_env": False})
+        builder = builder.request(no_proxy_request).get_updates_request(
+            no_proxy_get_updates_request
+        )
 
     application = builder.build()
 
@@ -617,9 +635,16 @@ def build_application() -> Application:
     application.add_handler(MessageHandler(filters.Regex("^📊 Predictions$"), show_predictions))
     application.add_handler(MessageHandler(filters.Regex("^📅 Today's Summary$"), today_summary))
 
-    # Lower-priority group: anything that didn't match a handler above,
-    # from anyone (authorized users get a gentle nudge, others get blocked).
-    application.add_handler(MessageHandler(filters.ALL, catch_all), group=1)
+    # Catch-all: anything that didn't match a handler above, from anyone
+    # (authorized users get a gentle nudge, others get blocked). This MUST
+    # stay in the default group (0) and be added last -- within one group
+    # python-telegram-bot only runs the FIRST handler whose filter matches,
+    # so adding it last here means it only fires when nothing above did.
+    # (A separate, higher-numbered group runs unconditionally alongside
+    # group 0 regardless of whether group 0 already handled the update,
+    # which previously caused every command to also get a second, spurious
+    # "Not sure what you mean" reply from this handler.)
+    application.add_handler(MessageHandler(filters.ALL, catch_all))
 
     return application
 
