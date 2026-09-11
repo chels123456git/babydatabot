@@ -587,7 +587,17 @@ async def catch_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def build_application() -> Application:
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+
+    # Some free hosts (e.g. PythonAnywhere's "Beginner" tier) only allow
+    # outbound internet access through their own proxy. If BOT_HTTP_PROXY is
+    # set, route all Bot API calls through it; on every other host this
+    # variable is simply left unset and nothing changes.
+    proxy_url = os.environ.get("BOT_HTTP_PROXY")
+    if proxy_url:
+        builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
+
+    application = builder.build()
 
     feed_conversation = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🍼 Log Feed$"), start_feed)],
